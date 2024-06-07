@@ -20,10 +20,8 @@ A thread scheduler.
 /*--------------------------------------------------------------------------*/
 
 #include "thread.H"
-#include "utils.H"
 #include "simple_timer.H"
 #include "interrupts.H"
-#include "page_table.H"
 
 /*--------------------------------------------------------------------------*/
 /* !!! IMPLEMENTATION HINT !!! */
@@ -75,22 +73,17 @@ protected:
     void enqueue(Thread * _thread);
 
     // Pop a thread from the head of the queue
-    Thread* dequeue();
+    Thread * dequeue();
 
-    Thread *control_thread;
-
-    PageTable *pt;
-    VMPool** MEMORY_POOL;
+    Thread * termination_thread;
 
 public:
     // Variable to keep track of whether the scheduler is running and if
     // ticks should be counted. If we don't do this time spent spinning
     // up initial threads 
     static bool running;
-
-    static Scheduler * scheduler;
     
-    Scheduler(PageTable* pt, VMPool** MEMORY_POOL);
+    Scheduler();
     /* Setup the scheduler. This sets up the ready queue, for example.
        If the scheduler implements some sort of round-robin scheme, then the 
        end_of_quantum handler is installed in the constructor as well. */
@@ -119,7 +112,7 @@ public:
        of the thread. 
        Graciously handle the case where the thread wants to terminate itself.*/
 
-    static void TerminateThread();
+    static void termination_thread_func();
 
 };
 
@@ -135,7 +128,7 @@ class EOQTimer : public SimpleTimer {
 class RRScheduler : public Scheduler {
     EOQTimer timer;
 public:
-    RRScheduler(int _hz, PageTable* pt, VMPool** MEMORY_POOL);
+    RRScheduler(int _hz);
 
     void yield() override;
 };

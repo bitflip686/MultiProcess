@@ -28,13 +28,9 @@
 /* INCLUDES */
 /*--------------------------------------------------------------------------*/
 
-#include "assert.H"
-#include "console.H"
-
-#include "frame_pool.H"
-
 #include "thread.H"
-
+#include "system.H"
+#include "assert.H"
 #include "threads_low.H"
 
 /*--------------------------------------------------------------------------*/
@@ -44,6 +40,11 @@
 Thread * current_thread = 0;
 /* Pointer to the currently running thread. This is used by the scheduler,
    for example. */
+
+void load_thread_context(PageTable * pt, VMPool * pool) {
+    Console::kprintf("Context switching %d %d\n", (int)pt, (int)pool);
+    System::context_switch(pt, pool);
+}
 
 /* -------------------------------------------------------------------------*/
 /* LOCAL DATA PRIVATE TO THREAD AND DISPATCHER CODE */
@@ -85,7 +86,7 @@ static void thread_shutdown() {
     Console::kprintf("In thread shutdown!\n");
 
     // Ask the scheduler to terminate the thread
-    Scheduler::scheduler->terminate(current_thread);
+    System::SCHEDULER->terminate(current_thread);
 }
 
 static void thread_start() {
@@ -169,19 +170,31 @@ void Thread::setup_context(Thread_Function _tfunction){
 /* -- Thread CONSTRUCTOR -- */
 /*--------------------------------------------------------------------------*/
 
-Thread::Thread(Thread_Function _tf, unsigned int _stack_size, VMPool ** MEMORY_POOL, ContFramePool * frame_pool) {
+Thread::Thread(Thread_Function _tf, unsigned int _stack_size, int _type) {
 /* Construct a new thread and initialize its stack. The thread is then ready to run.
    (The dispatcher is implemented in file "thread_scheduler".) 
 */
-    pt = new PageTable();
-    Console::kprintf("Loading page table\n");
-    pt->load();
-    Console::kprintf("Creating vmpool\n");
-    pool = new VMPool((1 << 30), (64 << 20), frame_pool, pt);
+    type = _type;
+
+    if (type == KERNEL) {
+        Console::kprintf("Creating thread using kernel instances\n");
+        pt = System::KERNEL_PAGE_TABLE;
+        pool = System::KERNEL_VM_POOL;
+    }
+    else {
+        Console::kprintf("Creating thread using custom instances\n");
+        pt = new PageTable();
+
+        Console::kprintf("Loading page table\n");
+        System::context_switch(pt, NULL);
+
+        Console::kprintf("Creating vmpool\n");
+        pool = new VMPool((1 << 30), (8 << 20), System::PROCESS_MEM_POOL, pt);
+    }
+
     Console::kprintf("Setting memory pool\n");
-    kernel_memory_pool = *MEMORY_POOL;
-    SYSTEM_MEMORY_POOL = MEMORY_POOL;
-    *SYSTEM_MEMORY_POOL = pool;
+    System::context_switch(NULL, pool);
+
     Console::kprintf("Creating stack\n");
     stack = new char[_stack_size];
 
@@ -202,42 +215,40 @@ Thread::Thread(Thread_Function _tf, unsigned int _stack_size, VMPool ** MEMORY_P
 
     setup_context(_tf);
 
-    *SYSTEM_MEMORY_POOL = kernel_memory_pool;
-}
-
-Thread::Thread(Thread_Function _tf, unsigned int _stack_size, VMPool ** MEMORY_POOL, PageTable * kernel_page_table) {
-    pt = kernel_page_table;
-    pt->load();
-
-    pool = *MEMORY_POOL;
-    kernel_memory_pool = *MEMORY_POOL;
-    SYSTEM_MEMORY_POOL = MEMORY_POOL;
-    *SYSTEM_MEMORY_POOL = pool;
-
-    stack = new char[_stack_size];
-
-    thread_id = nextFreePid++;
-
-    esp = (char*)((unsigned int)stack + _stack_size);
-    /* RECALL: The stack starts at the end of the reserved stack memory area. */
-
-    stack_size = _stack_size;
-
-    setup_context(_tf);
+    Console::kprintf("pt and pool %d %d\n", (int)pt, (int)pool);
+    System::context_switch_kernel(System::SOFT);
 }
 
 // We define a destructor to destroy the allocated stack
 Thread::~Thread() {
     Console::kprintf("In thread destructor! %d\n", thread_id);
-    pt->load();
-    (*SYSTEM_MEMORY_POOL)->PrintId();
-    *SYSTEM_MEMORY_POOL = pool;
-    (*SYSTEM_MEMORY_POOL)->PrintId();
+    System::context_switch(pt, pool);
+
     Console::kprintf("Deleting stack!\n");
     delete[] stack;
+
+    // We really have to thread the needle here.
+    // The pool is allocated within the Thread's address space,
+    // so have to delete it before we switch over to kernel's
+    // page table, but to delete it we need to be within
+    // the kernel's VMPool context, as that's where the VMPool
+    // was allocated from
+    System::context_switch_kernel(System::SOFT);
+    Console::kprintf("Thread type %d\n", type);
+    if (type == USER) {
+        delete pool;
+    }
+
+    // Here we switch over to the kernel address space,
+    // then we delete the page table, which is allocated
+    // within the kernel address space.
     Console::kprintf("Loading kernel stuff!\n");
-    PageTable::LoadKernelPageTable();
-    *SYSTEM_MEMORY_POOL = kernel_memory_pool;
+    System::context_switch_kernel(System::HARD);
+
+    if (type == USER) {
+        delete pt;
+    }
+    
     Console::kprintf("Leaving thread destructor!\n");
 }
 
@@ -256,18 +267,12 @@ void Thread::dispatch_to(Thread * _thread) {
 
     /* The value of 'current_thread' is modified inside 'threads_low_switch_to()'. */
 
-    if (Scheduler::running == false)
-        Scheduler::running = true;
+    if (System::SCHEDULER->running == false)
+        System::SCHEDULER->running = true;
 
     threads_low_switch_to(_thread);
 
     /* The call does not return until after the thread is context-switched back in. */
-
-    // We technically already loaded the page table into cr3 in threads_low.asm, but we call again
-    // to update current_page_table pointer, inefficient yes but shrug
-    Console::kprintf("Returned from dispatch_to\n");
-    current_thread->pt->load();
-    *current_thread->SYSTEM_MEMORY_POOL = current_thread->pool;
 }
        
 

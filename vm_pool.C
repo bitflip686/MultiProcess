@@ -75,6 +75,26 @@ VMPool::VMPool(unsigned long  _base_address,
     Console::puts("VMPool: Constructed VMPool object.\n");
 }
 
+// For the destructor we need to free any allocated regions and also our alloc/free arrays
+VMPool::~VMPool() {
+    // We have to start with idx = 1 so that we can maintain the validity of the alloc region while
+    // we delete the other regions
+    for (int idx = 1; idx < MAX_REGIONS; idx++) {
+        if (alloc[idx].size > 0) {
+            unsigned long region_start = alloc[idx].base_address;
+            unsigned long region_end = region_start + alloc[idx].size;
+            for (unsigned long addr = region_start; addr < region_end; addr += Machine::PAGE_SIZE) {
+                page_table->free_page(addr);
+            }
+        }
+    }
+
+    Console::kprintf("%d %d\n", (unsigned long)alloc, (unsigned long)free);
+    page_table->free_page((unsigned long)free);
+    page_table->free_page((unsigned long)alloc);
+    Console::kprintf("VMPool: Deleted VMPool %d\n", id);
+}
+
 unsigned long VMPool::allocate(unsigned long _size) {
     unsigned long adj_size, new_addr;
     int error, idx;
@@ -169,6 +189,7 @@ error:
     Console::puts("*****VMPool: Error ");
     Console::puti(error);
     Console::puts(" when releasing region!\n"); 
+    Console::kprintf("Region %d\n", _start_address);
     return;
 }
 
@@ -185,10 +206,7 @@ bool VMPool::is_legitimate(unsigned long _address) {
             return true;
     }
 
-    Console::puts("VMPool: Address ");
-    Console::putui(_address);
-    Console::puts(" is not a part of any region!\n Base addr: ");
-    Console::putui(base_address);
+    Console::kprintf("VMPool %d: Address %d is not a part of any region!\n", id, _address);
     return false;
 }
 

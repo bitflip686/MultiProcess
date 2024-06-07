@@ -39,7 +39,7 @@
    Otherwise, the thread functions don't return, and the threads run forever.
 */
 
-#define _USES_RR
+//#define _USES_RR
 
 
 #define GB * (0x1 << 30)
@@ -59,77 +59,54 @@
 /* INCLUDES */
 /*--------------------------------------------------------------------------*/
 
-#include "machine.H"         /* LOW-LEVEL STUFF   */
+#include "system.H"
+#include "assert.H"
+#include "scheduler.H"
+#include "page_table.H"
+#include "cont_frame_pool.H"
+#include "utils.H"
 #include "console.H"
+#include "machine.H"
+#include "exceptions.H"
 #include "gdt.H"
 #include "idt.H"             /* EXCEPTION MGMT.   */
 #include "irq.H"
-#include "exceptions.H"    
 #include "interrupts.H"
 
 #include "simple_timer.H"    /* TIMER MANAGEMENT  */
 
-#include "frame_pool.H"      /* MEMORY MANAGEMENT */
-#include "mem_pool.H"
-
 #include "thread.H"          /* THREAD MANAGEMENT */
 
-#ifdef _USES_SCHEDULER_
-#include "scheduler.H"
-#endif
-
-#include "page_table.H"
-#include "paging_low.H"
-#include "vm_pool.H"
-
-/*--------------------------------------------------------------------------*/
-/* MEMORY MANAGEMENT */
-/*--------------------------------------------------------------------------*/
-
-/* -- A POOL OF FRAMES FOR THE SYSTEM TO USE */
-FramePool * SYSTEM_FRAME_POOL;
-
-/* -- A POOL OF CONTIGUOUS MEMORY FOR THE SYSTEM TO USE */
-VMPool * MEMORY_POOL;
-
+// Memory management overrides
 typedef long unsigned int size_t;
 
 //replace the operator "new"
 void * operator new (size_t size) {
     Console::kprintf("Inside kernel new!\n");
-    MEMORY_POOL->PrintId();
-    unsigned long a = MEMORY_POOL->allocate((unsigned long)size);
+    System::CURRENT_VM_POOL->PrintId();
+    unsigned long a = System::CURRENT_VM_POOL->allocate((unsigned long)size);
     return (void *)a;
 }
 
 //replace the operator "new[]"
 void * operator new[] (size_t size) {
     Console::kprintf("Inside kernel new!\n");
-    MEMORY_POOL->PrintId();
-    unsigned long a = MEMORY_POOL->allocate((unsigned long)size);
+    System::CURRENT_VM_POOL->PrintId();
+    unsigned long a = System::CURRENT_VM_POOL->allocate((unsigned long)size);
     return (void *)a;
 }
 
 //replace the operator "delete"
 void operator delete (void * p, size_t s) {
-    MEMORY_POOL->release((unsigned long)p);
+    System::CURRENT_VM_POOL->release((unsigned long)p);
 }
 
 //replace the operator "delete[]"
 void operator delete[] (void * p) {
-    MEMORY_POOL->release((unsigned long)p);
+    System::CURRENT_VM_POOL->release((unsigned long)p);
 }
 
-/*--------------------------------------------------------------------------*/
-/* SCHEDULRE and AUXILIARY HAND-OFF FUNCTION FROM CURRENT THREAD TO NEXT */
-/*--------------------------------------------------------------------------*/
 
-#ifdef _USES_SCHEDULER_
-
-/* -- A POINTER TO THE SYSTEM SCHEDULER */
-Scheduler * SYSTEM_SCHEDULER;
-
-#endif
 
 void pass_on_CPU(Thread * _to_thread) {
   // Hand over CPU from current thread to _to_thread.
@@ -149,8 +126,8 @@ void pass_on_CPU(Thread * _to_thread) {
            we pre-empt the current thread by putting it onto the ready
            queue and yielding the CPU. */
 
-        SYSTEM_SCHEDULER->resume(Thread::CurrentThread());
-        SYSTEM_SCHEDULER->yield();
+        System::SCHEDULER->resume(Thread::CurrentThread());
+        System::SCHEDULER->yield();
 #endif
 #endif
 }
@@ -219,6 +196,9 @@ void fun1() {
 void fun2() {
     Console::puts("Thread: "); Console::puti(Thread::CurrentThread()->ThreadId()); Console::puts("\n");
     Console::puts("FUN 2 INVOKED!\n");
+    int test = 2;
+    int * test2 = new int(3);
+    Console::kprintf("Addresses: %d %d %d\n", (int)&test, (int)&test2, (int)test2);
 
 #ifdef _TERMINATING_FUNCTIONS_
     for(int j = 0; j < 10; j++) 
@@ -304,6 +284,8 @@ int main() {
     /* Take care of the hole in the memory. */
     process_mem_pool.mark_inaccessible(MEM_HOLE_START_FRAME, MEM_HOLE_SIZE);
 
+    System::PROCESS_MEM_POOL = &process_mem_pool;
+
     class PageFault_Handler : public ExceptionHandler {
        /* We derive the page fault handler from ExceptionHandler 
       and overload the method handle_exception. */
@@ -324,32 +306,17 @@ int main() {
                             4 MB);
  
      PageTable pt1;
+
+     System::KERNEL_PAGE_TABLE = &pt1;
+     System::CURRENT_PAGE_TABLE = &pt1;
  
      pt1.load();
  
      PageTable::enable_paging();
 
-     VMPool pool(512 MB, 256 MB, &process_mem_pool, PageTable::current_page_table);
-     MEMORY_POOL = &pool;
-
-     Console::kprintf("%d %d\n", sizeof(int), sizeof(char *));
-     Thread::PrintOffset();
-
-
-    /* -- INITIALIZE MEMORY -- */
-    /*    NOTE: We don't have paging enabled in this MP. */
-    /*    NOTE2: This is not an exercise in memory management. The implementation
-                of the memory management is accordingly *very* primitive! */
-
-    /* ---- Initialize a frame pool; details are in its implementation */
-    //FramePool system_frame_pool;
-    //SYSTEM_FRAME_POOL = &system_frame_pool;
-   
-    /* ---- Create a memory pool of 256 frames. */
-    //MemPool memory_pool(SYSTEM_FRAME_POOL, 256);
-    //MEMORY_POOL = &memory_pool;
-
-    /* -- MEMORY ALLOCATOR IS INITIALIZED. WE CAN USE new/delete! --*/
+     VMPool pool(512 MB, 256 MB, &process_mem_pool, &pt1);
+     System::CURRENT_VM_POOL = &pool;
+     System::KERNEL_VM_POOL = &pool;
 
     /* -- INITIALIZE THE TIMER (we use a very simple timer).-- */
 
@@ -372,11 +339,11 @@ int main() {
 #ifdef _USES_RR
 
     // Round Robin scheduler with time quantum of 10ms
-    SYSTEM_SCHEDULER = new RRScheduler(1, &pt1, &MEMORY_POOL);
+    System::SCHEDULER = new RRScheduler(1);
 
 #else
  
-    SYSTEM_SCHEDULER = new Scheduler(&pt1, &MEMORY_POOL);
+    System::SCHEDULER = new Scheduler();
 
 #endif
 
@@ -418,27 +385,27 @@ int main() {
     /* -- LET'S CREATE SOME THREADS... */
 
     Console::puts("CREATING THREAD 1...\n");
-    thread1 = new Thread(fun1, 1024, &MEMORY_POOL, &process_mem_pool);
+    thread1 = new Thread(fun1, 1024, Thread::USER);
     Console::puts("DONE\n");
 
     Console::puts("CREATING THREAD 2...");
-    thread2 = new Thread(fun2, 1024, &MEMORY_POOL, &process_mem_pool);
+    thread2 = new Thread(fun2, 1024, Thread::USER);
     Console::puts("DONE\n");
 
     Console::puts("CREATING THREAD 3...");
-    thread3 = new Thread(fun3, 1024, &MEMORY_POOL, &process_mem_pool);
+    thread3 = new Thread(fun3, 1024, Thread::USER);
     Console::puts("DONE\n");
 
     Console::puts("CREATING THREAD 4...");
-    thread4 = new Thread(fun4, 1024, &MEMORY_POOL, &process_mem_pool);
+    thread4 = new Thread(fun4, 1024, Thread::USER);
     Console::puts("DONE\n");
 
 #ifdef _USES_SCHEDULER_
 
     /* WE ADD thread2 - thread4 TO THE READY QUEUE OF THE SCHEDULER. */
-    SYSTEM_SCHEDULER->add(thread2);
-    SYSTEM_SCHEDULER->add(thread3);
-    SYSTEM_SCHEDULER->add(thread4);
+    System::SCHEDULER->add(thread2);
+    System::SCHEDULER->add(thread3);
+    System::SCHEDULER->add(thread4);
 #endif
 
     /* -- KICK-OFF THREAD1 ... */

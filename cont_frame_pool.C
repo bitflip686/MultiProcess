@@ -245,6 +245,7 @@ unsigned long ContFramePool::get_frames(unsigned int _n_frames)
 
     for (unsigned long fno = start; fno < start + _n_frames; fno++) {
         set_state(fno, FrameState::Used);
+        Console::kprintf("****ContFramePool: Allocated frame %d\n", fno);
     }
     
     set_state(start, FrameState::HoS);
@@ -277,6 +278,7 @@ void ContFramePool::_release_frames(unsigned long _first_frame_no)
 
     // loop until we hit either Free/HoS or we hit the end of this pool
     do {
+        Console::kprintf("****ContFramePool: Released frame %d\n", fno);
         set_state(fno++, FrameState::Free);
         nFreeFrames++;
     } while (get_state(fno) == FrameState::Used && fno < nframes);

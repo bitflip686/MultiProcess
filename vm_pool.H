@@ -82,6 +82,8 @@ public:
      * _page_table points to the page table that maps the logical memory
      * references to physical addresses. */
 
+    ~VMPool();
+
     unsigned long allocate(unsigned long _size);
     /* Allocates a region of _size bytes of memory from the virtual
      * memory pool. If successful, returns the virtual address of the

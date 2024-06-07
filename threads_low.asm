@@ -25,6 +25,7 @@ KERNEL_DS equ 2<<3	; kernel data segment is GDT entry 2
 INTERRUPT_STATE_SIZE equ 68 ; size of exception frame on stack
 
 PAGE_TABLE_OFFSET equ 24
+VM_POOL_OFFSET equ 28
 
 ; Save registers prior to calling a handler function.
 ; This must be kept up to date with:
@@ -50,6 +51,7 @@ PAGE_TABLE_OFFSET equ 24
 %endmacro
 
 extern _current_thread  ; defined and initialized in threads.c
+extern _load_thread_context
 
 
 global _threads_low_switch_to
@@ -111,7 +113,13 @@ _threads_low_switch_to:
 
     mov ebx, [eax+PAGE_TABLE_OFFSET]
     mov ebx, [ebx]
-    mov cr3, ebx ; Move new page table into cr3 register
+    mov cr3, ebx
+
+    push dword [eax+VM_POOL_OFFSET]
+    push dword [eax+PAGE_TABLE_OFFSET]
+    call _load_thread_context
+
+    add esp, 8
 
 	; Restore general purpose and segment registers, and clear interrupt
 	; number and error code.
@@ -133,7 +141,13 @@ _threads_low_switch_to:
 
     mov ebx, [eax+PAGE_TABLE_OFFSET]
     mov ebx, [ebx]
-    mov cr3, ebx ; Move new page table into cr3 register
+    mov cr3, ebx
+
+    push dword [eax+VM_POOL_OFFSET]
+    push dword [eax+PAGE_TABLE_OFFSET]
+    call _load_thread_context
+
+    add esp, 8
 
 	; Restore general purpose and segment registers, and clear interrupt
 	; number and error code.

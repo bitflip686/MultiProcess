@@ -28,6 +28,7 @@ Description: Basic Paging.
 #include "exceptions.H"
 #include "cont_frame_pool.H"
 #include "vm_pool.H"
+#include "console.H"
 
 /*--------------------------------------------------------------------------*/
 /* FORWARDS */
@@ -57,8 +58,8 @@ private:
     static PageTable     * kernel_page_table;
     static VMPool        * kernel_head_pool;
     VMPool               * head_pool = NULL;
-public:
     static PageTable     * current_page_table; /* pointer to currently loaded page table object */
+public:
     static const unsigned int PAGE_SIZE        = Machine::PAGE_SIZE; 
     /* in bytes */
     static const unsigned int ENTRIES_PER_PAGE = Machine::PT_ENTRIES_PER_PAGE; 
@@ -82,6 +83,8 @@ public:
        paging has been enabled.
     */
 
+    ~PageTable();
+
     void load();
     /* Makes the given page table the current table. This must be done once during
        system startup and whenever the address space is switched (e.g. during
@@ -104,8 +107,6 @@ public:
     static unsigned long * PDE_address(unsigned long addr);
 
     static unsigned long * PTE_address(unsigned long addr);
-
-    static void LoadKernelPageTable() { kernel_page_table->load(); }
 };
 
 #endif

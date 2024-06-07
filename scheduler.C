@@ -17,11 +17,6 @@
 /*--------------------------------------------------------------------------*/
 
 #include "scheduler.H"
-#include "thread.H"
-#include "console.H"
-#include "utils.H"
-#include "assert.H"
-#include "simple_keyboard.H"
 
 /*--------------------------------------------------------------------------*/
 /* DATA STRUCTURES */
@@ -45,7 +40,7 @@
 /* METHODS FOR CLASS   S c h e d u l e r  */
 /*--------------------------------------------------------------------------*/
 
-Scheduler * Scheduler::scheduler = NULL;
+static Scheduler * scheduler = NULL;
 bool Scheduler::running = false;
 
 void Scheduler::enqueue(Thread * _thread) {
@@ -71,11 +66,9 @@ Thread * Scheduler::dequeue() {
     return head;
 }
 
-Scheduler::Scheduler(PageTable* pt, VMPool** MEMORY_POOL) {
+Scheduler::Scheduler() {
     scheduler = this;
-    pt = pt;
-    MEMORY_POOL = MEMORY_POOL;
-    control_thread = new Thread(TerminateThread, 1024, MEMORY_POOL, pt); 
+    termination_thread = new Thread(termination_thread_func, 1024, Thread::KERNEL); 
     Console::puts("Constructed Scheduler.\n");
 }
 
@@ -112,18 +105,18 @@ void Scheduler::add(Thread * _thread) {
     resume(_thread);
 }
 
-void Scheduler::TerminateThread() {
-start:
-   Console::kprintf("In TerminateCurrentThread()\n");
-   char * cargo = Thread::CurrentThread()->GetCargo();
-   Thread * thread = (Thread*)cargo;
-   
-   Console::kprintf("Deleting thread: %d %d\n", thread->ThreadId(), (int)thread);
-   delete thread;
+void Scheduler::termination_thread_func() {
+    while (true) {
+       Console::kprintf("In TerminateCurrentThread()\n");
+       char * cargo = Thread::CurrentThread()->GetCargo();
+       Thread * thread = (Thread*)cargo;
+       
+       Console::kprintf("Deleting thread: %d %d\n", thread->ThreadId(), (int)thread);
+       delete thread;
 
-   Console::kprintf("Yielding\n");
-   Scheduler::scheduler->yield();
-   goto start;
+       Console::kprintf("Yielding\n");
+       scheduler->yield();
+    }
 }
 
 void Scheduler::terminate(Thread *& _thread) {
@@ -138,14 +131,18 @@ void Scheduler::terminate(Thread *& _thread) {
     // the current_thread variable reflects this. We just check if the
     // requested thread is the current thread, if it is, we just yield
     if (_thread == Thread::CurrentThread()) {
-        Console::kprintf("Req deleted thread: %d %d %d\n", _thread->ThreadId(), (int)_thread, control_thread->ThreadId());
-        control_thread->SetCargo((char*)(_thread));
-        Console::kprintf("Cargo: %d\n", (int)control_thread->GetCargo());
+        Console::kprintf("Req deleted thread: %d %d %d\n", _thread->ThreadId(), (int)_thread, termination_thread->ThreadId());
+
+        termination_thread->SetCargo((char*)(_thread));
+
+        Console::kprintf("Cargo: %d\n", (int)termination_thread->GetCargo());
+
         Console::kprintf("Dispatching to control\n");
-        Thread::dispatch_to(control_thread);
-        // Once we do this yield we'll never return to here
-        Console::kprintf("Yielding\n");
-        yield();
+
+        Thread::dispatch_to(termination_thread);
+
+        // We should not reach here
+        assert(false);
         return;
     }
 
@@ -186,8 +183,8 @@ void EOQTimer::handle_interrupt(REGS *_r) {
 
     if (ticks >= hz) {
         ticks = 0;
-        Scheduler::scheduler->resume(Thread::CurrentThread());
-        Scheduler::scheduler->yield();
+        scheduler->resume(Thread::CurrentThread());
+        scheduler->yield();
     }
 }
 
@@ -195,8 +192,7 @@ void EOQTimer::reset_ticks() {
     ticks = 0;
 }
 
-RRScheduler::RRScheduler(int _hz, PageTable* pt, VMPool** MEMORY_POOL) : Scheduler(pt, MEMORY_POOL), timer(_hz) {
-    scheduler = this;
+RRScheduler::RRScheduler(int _hz) : timer(_hz) {
     InterruptHandler::register_handler(0, &timer);
 
     Console::puts("Constructed RRScheduler!\n");
@@ -206,11 +202,11 @@ void RRScheduler::yield() {
     if (Machine::interrupts_enabled())
         Machine::disable_interrupts();
 
-    // Reset EOQ timer
-    timer.reset_ticks();
-
     Thread *thread = dequeue();
     if (thread) {
+        // Reset EOQ timer
+        timer.reset_ticks();
+
         // The current thread will hang here
         // When we get back the CPU, we start here and then
         // immediately re-enable interrupts.

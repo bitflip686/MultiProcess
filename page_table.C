@@ -1,5 +1,4 @@
 #include "assert.H"
-#include "exceptions.H"
 #include "console.H"
 #include "paging_low.H"
 #include "page_table.H"
@@ -12,8 +11,6 @@ unsigned long PageTable::shared_size = 0;
 unsigned long * PageTable::kernel_page_directory = NULL;
 VMPool * PageTable::kernel_head_pool = NULL;
 PageTable * PageTable::kernel_page_table = NULL;
-
-
 
 void PageTable::init_paging(ContFramePool * _kernel_mem_pool,
                             ContFramePool * _process_mem_pool,
@@ -79,11 +76,66 @@ PageTable::PageTable()
     Console::puts("PageTable: Constructed Page Table object\n");
 }
 
+// It might be good to encapsulate VMPool deletion within the page table itself.
+// The page table can have multiple VMPools so maybe it should manage them rather
+// than leave it up to the thread destructor to call delete.
+//
+// The page table and VMPool have a symbiotic relationship, such that
+// any PTEs created have to go through the VMPool and consequently are
+// tracked by the VMPool. Before a page table is deleted, its respective VMPools
+// should be deleted first. Then, by deleting the VMPools, we delete all allocations
+// made within the page tables, so we don't have to walk the actual page tables.
+//
+// A caveat though is that we have to
+// 1. delete the kernel frame which holds the page directory
+// 2. delete any process frames made for the page directory within userspace, ie idx > 255
+//
+// The case of 1 is simple. The case of 2, due to the relationship between VMPools and PTs
+// is simple as well. All PTEs are deleted already, so we need only delete the page tables.
+//
+// An issue that can/will arise in the future though is how to handle allocations below 255.
+// Currently, these allocations only consist of the VMPool, Page table, and thread itself, and
+// so are easily managed. But eventually processes/threads may make dynamic allocations within
+// kernel space, and though they should delete these allocations themselves as part of cleanup,
+// they may not. As a result, a mechanism wherein the page table itself keeps track of kernel
+// space allocations may be needed, so that it can free up this memory whenever its deleted, if
+// it wasn't freed already. Maybe just a linked list of frames. Well, this responsbility can be
+// foisted down the line. Maybe the process keeps track, or the thread, and its destructor handles
+// it. Either way, must be accounted for.
+PageTable::~PageTable() {
+    Console::kprintf("PageTable: Deleting page table\n");
+
+    for (int i = KERNEL_PDE_LIMIT; i < ENTRIES_PER_PAGE; i++) {
+        if ((page_directory[i] & 0x1) != 0) {
+            unsigned long frame_no = (page_directory[i] / PAGE_SIZE);
+            ContFramePool::release_frames(frame_no);
+            // We could mark it as not present now but we're deleting it, so why bother?
+        }
+    }
+    
+    unsigned long * addr = PTE_address((unsigned long)page_directory);
+
+    // We have to divide by frame size to get the frame no
+    unsigned long frame_no = ((unsigned long)page_directory) / PAGE_SIZE;
+
+    ContFramePool::release_frames(frame_no);
+
+    // Mark the entry as not present
+    *addr = 0 | 2;
+
+    // We go ahead and flush and just load in whatever the current page table is 
+    write_cr3((unsigned long)current_page_table->page_directory);
+}
+
 
 void PageTable::load()
 {
+    Console::kprintf("In load\n");
     current_page_table = this;
-    write_cr3((unsigned long)page_directory);
+    if (read_cr3() != (unsigned long)page_directory) {
+        Console::kprintf("writing cr3 %d\n", (unsigned long)page_directory);
+        write_cr3((unsigned long)page_directory);
+    }
     Console::puts("PageTable: Loaded page table\n");
 }
 
@@ -198,7 +250,7 @@ void PageTable::free_page(unsigned long _page_no)
     // We have to divide by frame size to get the frame no
     unsigned long frame_no = *addr / PAGE_SIZE;
 
-    process_mem_pool->release_frames(frame_no);
+    ContFramePool::release_frames(frame_no);
 
     // Mark the entry as not present
     *addr = 0 | 2;
@@ -210,7 +262,9 @@ void PageTable::free_page(unsigned long _page_no)
     Console::puts("\n");
 
     // Flush the TLB
-    load();
+    // We can't call laod b/c load logic had to be updated to not
+    // flush the tlb when we don't need to
+    write_cr3((unsigned long)page_directory);
 }
 
 /* Because the PDE is in direct mapped kernel memory, we don't have to do much

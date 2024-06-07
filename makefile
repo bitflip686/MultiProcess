@@ -57,12 +57,6 @@ simple_keyboard.o: simple_keyboard.C simple_keyboard.H
 
 # ==== MEMORY =====
 
-frame_pool.o: frame_pool.C frame_pool.H 
-	$(GCC) $(GCC_OPTIONS) -c -o frame_pool.o frame_pool.C
-
-mem_pool.o: mem_pool.C mem_pool.H 
-	$(GCC) $(GCC_OPTIONS) -c -o mem_pool.o mem_pool.C
-
 paging_low.o: paging_low.asm paging_low.H
 	$(AS) -f elf -o paging_low.o paging_low.asm
 
@@ -88,17 +82,20 @@ scheduler.o: scheduler.C scheduler.H thread.H
 
 # ==== KERNEL MAIN FILE =====
 
-kernel.o: kernel.C machine.H console.H gdt.H idt.H irq.H exceptions.H interrupts.H simple_timer.H frame_pool.H mem_pool.H thread.H scheduler.H \
-	page_table.H vm_pool.H
+system.o: system.C system.H
+	$(GCC) $(GCC_OPTIONS) -c -o system.o system.C
+
+kernel.o: kernel.C machine.H console.H gdt.H idt.H irq.H exceptions.H interrupts.H simple_timer.H thread.H scheduler.H \
+	page_table.H vm_pool.H system.H
 	$(GCC) $(GCC_OPTIONS) -c -o kernel.o kernel.C
 
 kernel.elf: start.o utils.o kernel.o \
    assert.o console.o gdt.o idt.o irq.o exceptions.o \
-   interrupts.o simple_timer.o simple_keyboard.o frame_pool.o mem_pool.o \
+   interrupts.o simple_timer.o simple_keyboard.o \
    thread.o threads_low.o scheduler.o machine.o machine_low.o \
-   paging_low.o page_table.o vm_pool.o cont_frame_pool.o
+   paging_low.o page_table.o vm_pool.o cont_frame_pool.o system.o
 	$(LD) -melf_i386 -T linker.ld -o kernel.elf start.o utils.o kernel.o \
    assert.o console.o gdt.o idt.o irq.o exceptions.o interrupts.o \
-   simple_timer.o simple_keyboard.o frame_pool.o mem_pool.o \
+   simple_timer.o simple_keyboard.o \
    thread.o threads_low.o scheduler.o machine.o machine_low.o \
-   paging_low.o page_table.o vm_pool.o cont_frame_pool.o
+   paging_low.o page_table.o vm_pool.o cont_frame_pool.o system.o

@@ -27,12 +27,8 @@
 /* INCLUDES */
 /*--------------------------------------------------------------------------*/
 
-#include "machine.H"
-#include "scheduler.H"
-#include "utils.H"
 #include "page_table.H"
 #include "vm_pool.H"
-#include "cont_frame_pool.H"
 #include "console.H"
 
 /*--------------------------------------------------------------------------*/
@@ -42,7 +38,7 @@
 /* -- THREAD FUNCTION (CALLED WHEN THREAD STARTS RUNNING) */
 typedef void (*Thread_Function)();
 
-class Scheduler;
+extern "C" void load_thread_context(PageTable * pt, VMPool * pool);
 
 /*--------------------------------------------------------------------------*/
 /* THREAD CONTROL BLOCK */
@@ -62,6 +58,8 @@ private:
                                may need to be stored, typically by schedulers.
                                (for future use) */
     PageTable * pt = NULL;
+    VMPool * pool;
+    int type;
 
     static int nextFreePid; /* Used to assign unique id's to threads. */
 
@@ -72,22 +70,19 @@ private:
     /* Sets up the initial context for the given kernel-only thread. 
        The thread is supposed the call the function _tfunction upon start.
     */
-
-    VMPool * pool;
  
 public: 
-    VMPool ** SYSTEM_MEMORY_POOL;
-    VMPool * kernel_memory_pool;
     Thread *next = NULL; // Utility member for linked list
 
-    Thread(Thread_Function _tf, unsigned int _stack_size, VMPool ** MEMORY_POOL, ContFramePool * frame_pool);
+    static const int KERNEL = 0;
+    static const int USER = 1;
+
+    Thread(Thread_Function _tf, unsigned int _stack_size, int _type);
     /* Create a thread that is set up to execute the given thread function. 
        The thread is given a pointer to the stack to use. 
        NOTE: _stack points to the beginning of the stack area, 
        i.e., to the bottom of the stack.
     */
-
-    Thread(Thread_Function _tf, unsigned int _stack_size, VMPool ** MEMORY_POOL, PageTable * kernel_page_table);
 
     ~Thread(); // Clean up the stack that gets allocated
 
@@ -104,10 +99,6 @@ public:
     static Thread * CurrentThread();
     /* Returns the currently running thread. NULL if no thread has started 
        yet. */
-
-    static void PrintOffset() {
-        Console::kprintf("Offset: %d\n", __builtin_offsetof(Thread, pt));
-    }
 
     int StackSize() {
         return stack_size;
